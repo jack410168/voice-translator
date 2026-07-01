@@ -1,0 +1,142 @@
+
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>粤譯英 語音翻譯</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang HK", "Microsoft JhengHei", sans-serif;
+    background: #f2f2f5;
+    padding: 18px 16px 40px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 19px; text-align: center; color: #333; margin: 4px 0 20px; letter-spacing: 0.5px; }
+  #mainBtn { display: block; width: 100%; max-width: 360px; margin: 0 auto 14px; padding: 18px; font-size: 20px; font-weight: bold; border: none; border-radius: 14px; background: #2d6cdf; color: #fff; box-shadow: 0 3px 8px rgba(0,0,0,0.15); }
+  #mainBtn.recording { background: #d92d2d; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(217,45,45,0.5); } 70% { box-shadow: 0 0 0 14px rgba(217,45,45,0); } 100% { box-shadow: 0 0 0 0 rgba(217,45,45,0); } }
+  #status { text-align: center; color: #666; font-size: 14px; margin-bottom: 18px; min-height: 18px; }
+  .card { max-width: 360px; margin: 0 auto 14px; background: #fff; border-radius: 12px; padding: 14px 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .card .label { font-size: 12px; color: #999; margin-bottom: 6px; font-weight: bold; }
+  .card .text { font-size: 18px; color: #222; white-space: pre-wrap; min-height: 24px; line-height: 1.4; }
+  #translatedCard .text { color: #2d6cdf; }
+  #replayBtn { display: none; max-width: 360px; margin: 0 auto; width: 100%; padding: 10px; font-size: 15px; border: 1px solid #2d6cdf; border-radius: 10px; background: #fff; color: #2d6cdf; }
+</style>
+</head>
+<body>
+<h1>粤譯英 語音翻譯</h1>
+<button id="mainBtn">粤譯英</button>
+<div id="status">撳一下開始錄音</div>
+<div class="card" id="originalCard">
+  <div class="label">原文</div>
+  <div class="text" id="originalText">—</div>
+</div>
+<div class="card" id="translatedCard">
+  <div class="label" id="translatedLabel">譯文</div>
+  <div class="text" id="translatedText">—</div>
+</div>
+<button id="replayBtn">再讀一次</button>
+<script>
+const SILENCE_TIMEOUT_MS = 10000;
+const RECOGNITION_LANG = 'zh-HK';
+const TRANSLATE_TO_EN = 'en';
+const TRANSLATE_TO_ZH = 'zh-TW';
+const mainBtn = document.getElementById('mainBtn');
+const statusEl = document.getElementById('status');
+const originalText = document.getElementById('originalText');
+const translatedText = document.getElementById('translatedText');
+const translatedLabel = document.getElementById('translatedLabel');
+const replayBtn = document.getElementById('replayBtn');
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+let finalTranscript = '';
+let lastActivityTime = 0;
+let watchdogTimer = null;
+let lastEnglishToSpeak = '';
+if (!SpeechRecognition) { statusEl.textContent = '此瀏覽器唔支援語音識別'; mainBtn.disabled = true; }
+function mergeWithOverlapTrim(a, b) {
+  a = a.trim(); b = b.trim();
+  if (!a) return b; if (!b) return a;
+  const maxLen = Math.min(a.length, b.length);
+  let overlap = 0;
+  for (let len = maxLen; len > 0; len--) { if (a.slice(a.length - len) === b.slice(0, len)) { overlap = len; break; } }
+  const rem = b.slice(overlap);
+  if (!rem) return a;
+  return a + (/[a-zA-Z0-9]$/.test(a) && /^[a-zA-Z0-9]/.test(rem) ? ' ' : '') + rem;
+}
+function setupRecognition() {
+  recognition = new SpeechRecognition();
+  recognition.lang = RECOGNITION_LANG;
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onresult = (event) => {
+    lastActivityTime = Date.now();
+    let final = '', interim = '';
+    for (let i = 0; i < event.results.length; i++) {
+      const piece = event.results[i][0].transcript;
+      if (event.results[i].isFinal) { final = mergeWithOverlapTrim(final, piece); } else { interim += piece; }
+    }
+    finalTranscript = final;
+    originalText.textContent = (finalTranscript + interim) || '—';
+  };
+  recognition.onerror = (e) => { if (e.error !== 'no-speech') statusEl.textContent = '錄音出錯：' + e.error; };
+  recognition.onend = () => { clearWatchdog(); isRecording = false; mainBtn.classList.remove('recording'); mainBtn.textContent = '粤譯英'; handleRecognitionEnd(); };
+}
+function startWatchdog() {
+  lastActivityTime = Date.now();
+  watchdogTimer = setInterval(() => { if (Date.now() - lastActivityTime > SILENCE_TIMEOUT_MS) { clearWatchdog(); if (recognition && isRecording) recognition.stop(); } }, 250);
+}
+function clearWatchdog() { if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; } }
+mainBtn.addEventListener('click', () => { if (isRecording) { recognition.stop(); return; } startRecording(); });
+function startRecording() {
+  try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch(e) {}
+  finalTranscript = ''; originalText.textContent = '—'; translatedText.textContent = '—';
+  translatedLabel.textContent = '譯文'; replayBtn.style.display = 'none';
+  statusEl.textContent = '錄音中…講完靜一陣就會自動翻譯';
+  setupRecognition();
+  try { recognition.start(); isRecording = true; mainBtn.classList.add('recording'); mainBtn.textContent = '停止錄音'; startWatchdog(); }
+  catch(e) { statusEl.textContent = '無法開始錄音：' + e.message; }
+}
+async function handleRecognitionEnd() {
+  const text = finalTranscript.trim();
+  if (!text) { statusEl.textContent = '未收到語音，撳一下再試'; return; }
+  originalText.textContent = text;
+  const isCantonese = /[\u4e00-\u9fff]/.test(text);
+  statusEl.textContent = '翻譯中…';
+  try {
+    if (isCantonese) {
+      const english = await translateText(text, 'zh-TW', TRANSLATE_TO_EN);
+      translatedLabel.textContent = '英文翻譯'; translatedText.textContent = english;
+      statusEl.textContent = '完成，播放英文發音'; lastEnglishToSpeak = english; speakEnglish(english);
+    } else {
+      const chinese = await translateText(text, 'en', TRANSLATE_TO_ZH);
+      translatedLabel.textContent = '中文翻譯'; translatedText.textContent = chinese;
+      statusEl.textContent = '完成（英文輸入，不會讀出）'; replayBtn.style.display = 'none';
+    }
+  } catch(e) { statusEl.textContent = '翻譯失敗：' + e.message; }
+}
+async function translateText(text, sl, tl) {
+  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sl + '&tl=' + tl + '&dt=t&q=' + encodeURIComponent(text);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('網絡錯誤');
+  const data = await res.json();
+  return data[0].map(seg => seg[0]).join('');
+}
+function speakEnglish(text) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US'; utter.rate = 0.95;
+  speechSynthesis.speak(utter);
+  replayBtn.style.display = 'block';
+}
+replayBtn.addEventListener('click', () => { if (lastEnglishToSpeak) speakEnglish(lastEnglishToSpeak); });
+if (SpeechRecognition) { startRecording(); }
+</script>
+</body>
+</html>
+HTMLEOF
